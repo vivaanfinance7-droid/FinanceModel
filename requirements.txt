@@ -1,0 +1,11 @@
+pandas
+numpy
+yfinance
+alpaca-py
+requests
+twilio
+flask
+python-dotenv
+pandas_market_calendars
+trafilatura
+markdown

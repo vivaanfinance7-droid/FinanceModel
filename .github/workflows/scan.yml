@@ -1,0 +1,63 @@
+name: SP500 Scanner
+
+# Runs on GitHub's servers -- fires whether or not your own computer is on.
+#
+# Cron below is UTC and covers 13:00-21:59 UTC every 15 minutes on weekdays.
+# That's ~9:00 AM-5:59 PM ET in daylight time (EDT, UTC-4) and ~8:00 AM-4:59
+# PM ET in standard time (EST, UTC-5) -- deliberately wide on both ends so it
+# never needs editing for the twice-a-year DST switch. The actual "is this a
+# 9:35/1:45 market-analysis run or a plain price check" decision is made by
+# scanner.py itself (state_manager.current_scan_slot(), which is timezone-
+# aware via market_hours.NY_TZ), exactly the same logic used by the local
+# Windows Task Scheduler triggers. Runs that land outside market hours are
+# harmless no-ops (config.RESTRICT_TO_MARKET_HOURS / market_hours.py).
+#
+# GitHub's schedule trigger is best-effort and can slip by several minutes
+# under platform load -- config.STRATEGY_SCAN_SLOT_TOLERANCE_MINUTES (10 min)
+# absorbs normal drift, but a very late run could occasionally miss a slot.
+
+on:
+  schedule:
+    - cron: "*/15 13-21 * * 1-5"
+  workflow_dispatch: {}   # lets you trigger a run manually from the Actions tab, for testing
+
+permissions:
+  contents: write   # needed to commit strategy_state.json back (see last step)
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run scanner
+        env:
+          ALPACA_API_KEY: ${{ secrets.ALPACA_API_KEY }}
+          ALPACA_SECRET_KEY: ${{ secrets.ALPACA_SECRET_KEY }}
+          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          TWILIO_ACCOUNT_SID: ${{ secrets.TWILIO_ACCOUNT_SID }}
+          TWILIO_AUTH_TOKEN: ${{ secrets.TWILIO_AUTH_TOKEN }}
+          TWILIO_FROM_NUMBER: ${{ secrets.TWILIO_FROM_NUMBER }}
+          ALERT_TO_NUMBER: ${{ secrets.ALERT_TO_NUMBER }}
+          DASHBOARD_URL: ${{ secrets.DASHBOARD_URL }}
+        run: python scanner.py
+
+      # strategy_state.json tracks which of today's two full-scan slots
+      # (09:35 / 13:45) have already run. GitHub Actions runners are
+      # ephemeral -- without committing this back, every run would look like
+      # the "first" run of the day and re-trigger a full scan + alert.
+      - name: Persist scan-slot state
+        run: |
+          git config user.name "sp500-scanner-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add strategy_state.json
+          git diff --cached --quiet || git commit -m "chore: update strategy_state.json [skip ci]"
+          git push || true

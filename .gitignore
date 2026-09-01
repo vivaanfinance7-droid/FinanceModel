@@ -1,0 +1,17 @@
+.env
+__pycache__/
+*.pyc
+logs/
+.claude/
+
+# Regenerable caches / research scratch -- not app state that needs to sync
+backtest_*.json
+sim_*.json
+movers.json
+digest.json
+digest_state.json
+news_summaries.json
+portfolio.json
+sp500_tickers.json
+state.json
+watchlist.json
