@@ -57,7 +57,7 @@ RESTRICT_TO_MARKET_HOURS = True
 # network downloads and no indicator math for ~500 tickers -- so the periodic
 # scans stop lagging the machine. The market-hours check above is left fully
 # intact; this just short-circuits ahead of it. Set back to False to resume.
-SCAN_PAUSED = True
+SCAN_PAUSED = False
 
 # ---------------------------------------------------------------------------
 # ADDITIONAL INDICATORS
