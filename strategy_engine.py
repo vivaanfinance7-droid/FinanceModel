@@ -236,6 +236,21 @@ def _relative_strength_ok(daily_df, market_daily_df, direction):
     return relative_strength > 0 if direction == "BUY" else relative_strength < 0
 
 
+def _naive_normalized(ts):
+    """
+    pd.Timestamp(ts).normalize(), stripped of tz if present. `as_of_ts` here
+    is usually daily_df.index[-1] -- tz-AWARE UTC when the daily history
+    came from Alpaca, tz-naive when it came from yfinance -- while the
+    yfinance-sourced comparison index (earnings dates / analyst actions)
+    below is always forced tz-naive. Comparing a tz-aware Timestamp against
+    a tz-naive DatetimeIndex raises TypeError, so both sides must agree.
+    """
+    ts = pd.Timestamp(ts)
+    if ts.tzinfo is not None:
+        ts = ts.tz_localize(None)
+    return ts.normalize()
+
+
 def _upcoming_earnings_within(ticker, as_of_ts, days_ahead):
     """
     Checks whether `ticker` has an earnings report scheduled within
@@ -257,7 +272,7 @@ def _upcoming_earnings_within(ticker, as_of_ts, days_ahead):
     if dates_df is None or dates_df.empty:
         return False
     idx = dates_df.index.tz_localize(None).normalize()
-    as_of_norm = pd.Timestamp(as_of_ts).normalize()
+    as_of_norm = _naive_normalized(as_of_ts)
     window_end = as_of_norm + pd.Timedelta(days=days_ahead)
     return bool(((idx > as_of_norm) & (idx <= window_end)).any())
 
@@ -303,7 +318,7 @@ def _analyst_revision_ok(ticker, as_of_ts, direction):
     if ud is None or ud.empty:
         return True
     idx = ud.index.tz_localize(None) if getattr(ud.index, "tz", None) is not None else ud.index
-    as_of_norm = pd.Timestamp(as_of_ts).normalize()
+    as_of_norm = _naive_normalized(as_of_ts)
     window_start = as_of_norm - pd.Timedelta(days=config.ANALYST_REVISION_LOOKBACK_DAYS)
     window = ud[(idx > window_start) & (idx <= as_of_norm)]
     if window.empty or "Action" not in window.columns:
@@ -337,7 +352,7 @@ def _fundamental_quality_ok(ticker, as_of_ts, direction):
     if dates_df is None or dates_df.empty or "Reported EPS" not in dates_df.columns:
         return True
     idx = dates_df.index.tz_localize(None).normalize()
-    as_of_norm = pd.Timestamp(as_of_ts).normalize()
+    as_of_norm = _naive_normalized(as_of_ts)
     reported = dates_df[idx <= as_of_norm]  # only quarters already reported by this date
     if reported.empty:
         return True
