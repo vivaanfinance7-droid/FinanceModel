@@ -236,12 +236,19 @@ DIGEST_STATE_FILE = "digest_state.json"
 # ---------------------------------------------------------------------------
 STRATEGY_STATE_FILE = "strategy_state.json"   # tracks {"date":..., "slots_ran": [...]}
 
-# The two full-scan ("market analysis") times each trading day, in
+# The full-scan ("market analysis") times each trading day, in
 # America/New_York local time, 24h "HH:MM". Only a scan that lands within
 # STRATEGY_SCAN_SLOT_TOLERANCE_MINUTES of one of these (and hasn't already
 # run for that slot today) does the full analysis + sends a phone alert;
 # every other scheduled run that day is a silent price-only refresh.
-STRATEGY_SCAN_TIMES_ET = ["09:35", "13:45"]
+#
+# 11:40 sits roughly in the middle of the 09:35-13:45 gap specifically to
+# catch a genuine INTRADAY breakout (one that crosses its trend line during
+# the day, not one already active at the open) closer to when it actually
+# fires -- the two-check version left up to a ~4h10m blind spot where a
+# signal could trigger and not be seen/alerted until well after the move
+# had already happened (see the EBAY entry from 2026-09-01's first live day).
+STRATEGY_SCAN_TIMES_ET = ["09:35", "11:40", "13:45"]
 STRATEGY_SCAN_SLOT_TOLERANCE_MINUTES = 10
 
 # Deep daily history so the Monthly/Weekly cascade legs have enough swing
