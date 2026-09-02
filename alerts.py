@@ -51,15 +51,21 @@ def build_top5_message(results, slot_label=None, seen_today=None):
     lines = [f"{header} (regime: {regime}): {len(top5)} BUY signal(s):"]
     for r in top5:
         tp = r["trade_plan"]
-        line = f"{r['ticker']}: entry {tp['entry']:.2f} / stop {tp['stop']:.2f} / target {tp['target']:.2f}"
+        line = (f"{r['ticker']}: qty {tp['qty']} @ entry {tp['entry']:.2f} "
+                f"/ stop {tp['stop']:.2f} / target {tp['target']:.2f}")
 
-        # Prefer the real intraday crossing time (precise, e.g. "10:30 AM")
-        # over the coarser "which check first saw it" flag -- only fall
-        # back to the latter when the crossing time couldn't be determined
-        # (e.g. intraday data fetch failed).
+        # Prefer the real intraday crossing time+price (precise, e.g.
+        # "10:30 AM @ 103.20, +1.8% since") over the coarser "which check
+        # first saw it" flag -- only fall back to the latter when the
+        # crossing time couldn't be determined (e.g. intraday data fetch
+        # failed). Both branches show a %-since figure now -- the earlier
+        # version only showed it in the fallback branch, which is why some
+        # tickers had it and others didn't.
         crossed_at = r["trend_line_check"].get("crossed_at")
-        if crossed_at:
-            line += f" (crossed {crossed_at})"
+        crossed_price = r["trend_line_check"].get("crossed_price")
+        if crossed_at and crossed_price:
+            pct_moved = (tp["entry"] - crossed_price) / crossed_price * 100
+            line += f" (crossed {crossed_at} @ {crossed_price:.2f}, {pct_moved:+.1f}% since)"
         else:
             prior = seen_today.get(r["ticker"])
             if prior:
