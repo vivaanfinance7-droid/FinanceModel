@@ -72,6 +72,14 @@ def run_scan():
         state_manager.mark_full_strategy_scan_ran_for_slot(slot)
         qualifying = [r for r in results if r.get("passes")]
         log.info(f"Full scan analyzed {len(results)} tickers; {len(qualifying)} passed a method.")
+
+        # Snapshot BEFORE recording this run's tickers, so the alert can
+        # correctly tell "already seen earlier today" apart from "brand new
+        # this check" -- see alerts.build_top5_message.
+        seen_today_before = state_manager.get_seen_today()
+        for r in results:
+            if r.get("recommendation") == "BUY" and r.get("trade_plan"):
+                state_manager.mark_seen_today(r["ticker"], r["trade_plan"]["entry"], slot)
     else:
         log.info("=== Price-only refresh (outside a market-analysis slot, or it already ran) ===")
         qualifying = strategy_engine.run_price_only_refresh(store.load_movers().get("companies", []))
@@ -104,7 +112,7 @@ def run_scan():
     # whatever's true RIGHT NOW, including "0 signals" -- a twice-daily
     # market-analysis check-in, not a one-time ping the first time a setup
     # appears. Price-only refreshes never reach this point.
-    message = alerts.build_top5_message(results, slot_label=slot)
+    message = alerts.build_top5_message(results, slot_label=slot, seen_today=seen_today_before)
     log.info(f"Sending alert: {message}")
     alerts.send(message)
 

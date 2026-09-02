@@ -12,6 +12,34 @@ import config
 import market_hours
 
 
+def _strategy_state_path():
+    return os.path.join(os.path.dirname(__file__), config.STRATEGY_STATE_FILE)
+
+
+def _load_strategy_state():
+    """
+    {"date": "...", "slots_ran": [...], "seen_today": {ticker: {"first_price":..., "first_slot":...}}}
+    Resets to a fresh empty shape whenever the stored date isn't today.
+    """
+    today = date.today().isoformat()
+    path = _strategy_state_path()
+
+    if os.path.exists(path):
+        with open(path, "r") as f:
+            saved = json.load(f)
+        if saved.get("date") == today:
+            saved.setdefault("slots_ran", [])
+            saved.setdefault("seen_today", {})
+            return saved
+
+    return {"date": today, "slots_ran": [], "seen_today": {}}
+
+
+def _save_strategy_state(state):
+    with open(_strategy_state_path(), "w") as f:
+        json.dump(state, f)
+
+
 def current_scan_slot():
     """
     Whether "right now" (America/New_York time) falls within
@@ -34,37 +62,37 @@ def already_ran_full_strategy_scan_for_slot(slot):
     """
     Whether the full strategy scan (trend-line + FRVP, full universe) has
     already run today for this particular slot (e.g. "09:35") -- tracked by
-    (date, slots_ran) so the two daily full scans don't collide and a
+    (date, slots_ran) so the daily full scans don't collide and a
     holiday/skipped day doesn't carry over stale state. See scanner.py.
     """
-    path = os.path.join(os.path.dirname(__file__), config.STRATEGY_STATE_FILE)
-    today = date.today().isoformat()
-
-    if not os.path.exists(path):
-        return False
-    with open(path, "r") as f:
-        saved = json.load(f)
-    if saved.get("date") != today:
-        return False
-    return slot in saved.get("slots_ran", [])
+    return slot in _load_strategy_state()["slots_ran"]
 
 
 def mark_full_strategy_scan_ran_for_slot(slot):
-    path = os.path.join(os.path.dirname(__file__), config.STRATEGY_STATE_FILE)
-    today = date.today().isoformat()
+    state = _load_strategy_state()
+    if slot not in state["slots_ran"]:
+        state["slots_ran"].append(slot)
+    _save_strategy_state(state)
 
-    saved = {"date": today, "slots_ran": []}
-    if os.path.exists(path):
-        with open(path, "r") as f:
-            existing = json.load(f)
-        if existing.get("date") == today:
-            saved["slots_ran"] = existing.get("slots_ran", [])
 
-    if slot not in saved["slots_ran"]:
-        saved["slots_ran"].append(slot)
+def get_seen_today():
+    """
+    {ticker: {"first_price": float, "first_slot": "09:35"}} for every BUY
+    candidate any full scan has found so far today, keyed by the price/slot
+    it FIRST appeared at -- used to flag "you've already seen this one
+    today" (and how far it's moved since) in the phone alert, so a signal
+    that's been running since the morning check doesn't read as fresh at
+    1:45. Resets automatically at the start of each new trading day.
+    """
+    return _load_strategy_state()["seen_today"]
 
-    with open(path, "w") as f:
-        json.dump(saved, f)
+
+def mark_seen_today(ticker, price, slot):
+    """First-seen-wins: does nothing if `ticker` is already recorded today."""
+    state = _load_strategy_state()
+    if ticker not in state["seen_today"]:
+        state["seen_today"][ticker] = {"first_price": price, "first_slot": slot}
+        _save_strategy_state(state)
 
 
 def already_ran_digest_today():

@@ -17,19 +17,27 @@ log = logging.getLogger("sp500_scanner")
 # MESSAGE BUILDERS
 # ---------------------------------------------------------------------------
 
-def build_top5_message(results, slot_label=None):
+def build_top5_message(results, slot_label=None, seen_today=None):
     """
-    Sent unconditionally on each of the day's two scheduled "market
-    analysis" scans (see scanner.py / config.STRATEGY_SCAN_TIMES_ET) -- does
-    NOT dedupe against previously alerted tickers, since the point is a
-    fresh twice-daily read, not a one-time ping the first time a setup
+    Sent unconditionally on each of the day's scheduled "market analysis"
+    scans (see scanner.py / config.STRATEGY_SCAN_TIMES_ET) -- does NOT
+    dedupe against previously alerted tickers, since the point is a fresh
+    read at every checkpoint, not a one-time ping the first time a setup
     appears.
 
     results: list of strategy_engine.analyze_ticker()-shaped dicts (the
     full scan's results, not pre-filtered). Picks up to 5 BUY signals with
     a trade plan, alphabetically by ticker -- same "no validated ranking,
     so alphabetical" rule used everywhere else in this project.
+
+    seen_today: {ticker: {"first_price":..., "first_slot":...}} from
+    state_manager.get_seen_today(), captured BEFORE this scan's results were
+    recorded -- lets each line flag "you've already seen this one today"
+    plus how far it's moved since, rather than reading as a brand-new setup
+    every time it's still active at a later checkpoint (see the EBAY
+    entry-timing discussion from 2026-09-01).
     """
+    seen_today = seen_today or {}
     buys = [r for r in results if r.get("recommendation") == "BUY" and r.get("trade_plan")]
     buys.sort(key=lambda r: r["ticker"])
     top5 = buys[:5]
@@ -43,7 +51,12 @@ def build_top5_message(results, slot_label=None):
     lines = [f"{header} (regime: {regime}): {len(top5)} BUY signal(s):"]
     for r in top5:
         tp = r["trade_plan"]
-        lines.append(f"{r['ticker']}: entry {tp['entry']:.2f} / stop {tp['stop']:.2f} / target {tp['target']:.2f}")
+        line = f"{r['ticker']}: entry {tp['entry']:.2f} / stop {tp['stop']:.2f} / target {tp['target']:.2f}"
+        prior = seen_today.get(r["ticker"])
+        if prior:
+            pct_moved = (tp["entry"] - prior["first_price"]) / prior["first_price"] * 100
+            line += f" [seen {prior['first_slot']} @ {prior['first_price']:.2f}, {pct_moved:+.1f}% since]"
+        lines.append(line)
     lines.append(config.DASHBOARD_URL)
     return "\n".join(lines)
 
