@@ -20,6 +20,13 @@ section for the cadence design:
 route -- runs the full method for one ticker on demand, any time, independent
 of this daily cadence; it upserts movers.json directly via store.upsert_mover
 and never sends a push alert.)
+
+On-demand full market check, any time: `python scanner.py --force` locally,
+or the "Run workflow" button on the GitHub Actions "SP500 Scanner" page
+(works from a phone browser, no computer needed -- it passes --force
+automatically, see .github/workflows/scan.yml). Bypasses the time-slot gate
+and always does a full scan + sends an alert, without blocking or
+double-counting the day's three real scheduled checks.
 """
 
 import logging
@@ -49,17 +56,31 @@ logging.basicConfig(
 log = logging.getLogger("sp500_scanner")
 
 
-def run_scan():
+def run_scan(force=False):
+    """
+    force=True (see `python scanner.py --force`, or the GitHub Actions
+    "Run workflow" button -- see .github/workflows/scan.yml) bypasses the
+    09:35/11:40/13:45 slot gate entirely and always does a full scan +
+    sends the alert, labeled "manual" instead of a real slot name. It does
+    NOT mark any of the three real slots as having run, so it can't block
+    or double up with the next scheduled check -- it's a genuinely extra,
+    on-demand look, for whenever you forgot to check or just want a fresher
+    read than the last scheduled one.
+    """
     if config.SCAN_PAUSED:
         log.info("Scans paused (config.SCAN_PAUSED=True) -- skipping.")
         return
 
-    if config.RESTRICT_TO_MARKET_HOURS and not market_hours.is_market_hours():
+    if not force and config.RESTRICT_TO_MARKET_HOURS and not market_hours.is_market_hours():
         log.info("Outside market hours -- skipping scan.")
         return
 
-    slot = state_manager.current_scan_slot()
-    is_full_scan = slot is not None and not state_manager.already_ran_full_strategy_scan_for_slot(slot)
+    if force:
+        slot = "manual"
+        is_full_scan = True
+    else:
+        slot = state_manager.current_scan_slot()
+        is_full_scan = slot is not None and not state_manager.already_ran_full_strategy_scan_for_slot(slot)
 
     if is_full_scan:
         log.info(f"=== Full strategy scan [{slot} slot] (trend-line + volume-profile, full S&P 500 universe) ===")
@@ -69,7 +90,8 @@ def run_scan():
             log.warning("Full strategy scan produced no results (data fetch may have failed) -- "
                         "leaving movers.json untouched; will retry on the next scheduled run today.")
             return
-        state_manager.mark_full_strategy_scan_ran_for_slot(slot)
+        if not force:
+            state_manager.mark_full_strategy_scan_ran_for_slot(slot)
         qualifying = [r for r in results if r.get("passes")]
         log.info(f"Full scan analyzed {len(results)} tickers; {len(qualifying)} passed a method.")
 
@@ -125,4 +147,4 @@ def run_scan():
 
 
 if __name__ == "__main__":
-    run_scan()
+    run_scan(force="--force" in sys.argv)

@@ -19,7 +19,11 @@ name: SP500 Scanner
 on:
   schedule:
     - cron: "*/15 13-21 * * 1-5"
-  workflow_dispatch: {}   # lets you trigger a run manually from the Actions tab, for testing
+  # Manual "Run workflow" button on the Actions tab (works from a phone
+  # browser, no computer needed) -- always forces a real full scan + alert
+  # via `python scanner.py --force`, regardless of what time it is, for
+  # whenever you forgot to check or just want a fresher read.
+  workflow_dispatch: {}
 
 permissions:
   contents: write   # needed to commit strategy_state.json back (see last step)
@@ -48,7 +52,12 @@ jobs:
           TWILIO_FROM_NUMBER: ${{ secrets.TWILIO_FROM_NUMBER }}
           ALERT_TO_NUMBER: ${{ secrets.ALERT_TO_NUMBER }}
           DASHBOARD_URL: ${{ secrets.DASHBOARD_URL }}
-        run: python scanner.py
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            python scanner.py --force
+          else
+            python scanner.py
+          fi
 
       # strategy_state.json tracks which of today's two full-scan slots
       # (09:35 / 13:45) have already run. GitHub Actions runners are
