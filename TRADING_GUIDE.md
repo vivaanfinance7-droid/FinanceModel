@@ -444,28 +444,40 @@ accurate for the day ahead.
 
 ---
 
-## Timing: Why "When You Check" Doesn't Change What You See (Mostly)
+## Timing: What Actually Stays Fixed During the Day (And What Doesn't)
 
-A natural question: does it matter whether you check this dashboard at 9:30
-in the morning versus 2:00 in the afternoon? For whether a trend-line
-signal fires, the answer is **no** — and that's deliberate.
+A natural question: does it matter whether you check this dashboard at 9:35
+in the morning versus 1:45 in the afternoon? **Yes — a real trade correction
+on 2026-09-01 proved this the hard way**, so this section was rewritten to
+match what the code actually does, not what seemed like it should be true.
 
-Signals are only ever based on a stock's **fully completed** closing price
-from the day before, never a live, still-moving intraday price. This
-matters because of a well-known trading trap called a **fakeout**: price
-spikes past a line for an hour, looks like a real breakout, and then
-reverses and closes back on the original side before the day ends. If this
-tool reacted to that intraday spike, it would recommend a trade based on a
-move that never actually held. Waiting for the day to fully close before
-trusting a break is the standard, textbook fix for this — the tradeoff is a
-one-day delay: a breakout that happens and holds today is only confirmed and
-recommended starting on the *next* check (after today's close, or tomorrow
-morning), never the same day it happens.
+**What stays fixed all day**: the trend lines themselves. They're built from
+swing points detected in **fully completed** daily candles only — never
+today's still-forming price — so the lines you see at 9:35 are the exact
+same lines you'll see at 1:45. This is the real defense against a
+**fakeout** (price spikes past a line for an hour, then reverses and closes
+back on the original side): the spike alone can never redraw or shift the
+lines, because line-drawing only ever looks at yesterday and earlier.
 
-So checking at 9:30 AM and checking at 2:00 PM the same day will show you
-the same set of confirmed recommendations either way — the only thing that
-changes with the time of day is the *live price* used for sizing the entry,
-since that's a real, moving number.
+**What does NOT stay fixed**: whether *live price right now* has actually
+crossed one of those lines. A breakout is detected by comparing yesterday's
+confirmed close against the **current live price** — and live price moves
+all day. That means the same stock, with the exact same lines, can
+genuinely read HOLD at 9:35 and BUY at 1:45, if it crosses a line sometime
+in between. This is exactly what happened with EBAY on 2026-09-01: HOLD at
+9:35 AM (confirmed close 103.56, live price 104.31 — not yet crossed), BUY
+by 1:45 PM (same confirmed close, live price had climbed to 105.79 — now
+past the line). The entry captured was already well into that day's move,
+not the start of it.
+
+**The practical fix isn't "check less" or "trust it less" — it's watching
+for repeats.** Every alert now flags a ticker that already showed up
+earlier the same day with `[seen 09:35 @ 100.00, +2.0% since]` — a direct,
+visible answer to "has this already run since I could have gotten in
+earlier," instead of you having to notice it from a chart afterward. A
+schedule with **three** checks a day (09:35 / 11:40 / 1:45, see
+"Automation" below) also exists specifically to shrink the worst-case gap
+between a line actually being crossed and you finding out about it.
 
 ### The "Watching" Badge — A Heads-Up, Not a Signal
 
@@ -666,22 +678,33 @@ labeled as less complete rather than silently missing.
 
 ## Automation
 
-The scanner runs on a schedule (via Windows Task Scheduler) six times during
-each trading day, plus once each morning before the market opens for a
-digest of upcoming earnings and notable news. You don't need to manually run
-anything day to day — alerts arrive as push notifications or texts, and the
-dashboard is always showing the latest scan's results whenever you open it.
+Starting 2026-09-01, the scanner runs in the cloud (GitHub Actions) so it
+fires on schedule whether or not the local computer is on — it checks in
+roughly every 15 minutes during market hours, plus a Windows Task Scheduler
+copy of the same schedule exists locally as a currently-disabled fallback.
+A separate once-daily morning digest (earnings/news) still runs locally
+only. You don't need to manually run anything day to day — alerts arrive as
+push notifications or texts, and the dashboard reflects the latest scan
+whenever you open it.
 
-Of those six runs, only the **first one each trading day** does the full
-trend-line + volume-profile analysis (see "The Trend-Line Strategy" above
-for why — it's a heavier calculation than the old scan). Which run that is
-isn't hardcoded to a specific time of day; the scanner just checks "have I
-already done today's full analysis?" and does it on whichever run is first
-to ask. The remaining runs that day just refresh prices. (Scans can also be
-paused entirely without touching this schedule — see `config.SCAN_PAUSED`
-— which stops all scanning, full or price-only, useful if you want the
-dashboard to keep showing its last results without your computer doing any
-background work.)
+Only **three** of those check-ins each day do the full trend-line +
+volume-profile analysis and send a phone alert: **9:35 AM, 11:40 AM, and
+1:45 PM ET.** Every other check-in that day is a silent price-only refresh
+— no re-analysis, no alert. The three times aren't arbitrary: 9:35 catches
+whatever's already true right at the open; 1:45 catches the afternoon
+session; 11:40 sits in between specifically to shrink the biggest blind
+spot (see "Timing" above for why a multi-hour gap matters). Each of the
+three alerts lists up to 5 BUY signals, alphabetically, with entry/stop/
+target, and flags any ticker that already appeared at an earlier check the
+same day.
+
+(Scans can be paused entirely without touching this schedule — see
+`config.SCAN_PAUSED` — which stops all scanning, full or price-only, useful
+if you want the dashboard to keep showing its last results without any
+background work happening. Since this runs in the cloud now, changing this
+schedule requires editing `config.py` **and pushing to the GitHub repo** —
+editing the local file alone no longer has any effect on what actually
+runs.)
 
 ---
 
@@ -762,26 +785,40 @@ Putting all of the above into an actual daily routine:
    the prior day's close and won't change today. Bullish means don't expect
    (or force) any trades today. Neutral or bearish means it's worth checking
    further once the market opens.
-2. **Look at the confirmed BUY list any time during market hours** — the
-   exact time you check doesn't change which signals are confirmed, only
-   the live entry price.
-3. **If there are more than 5, don't hunt for a "best" one** — there isn't a
-   proven way to find it (see above). Instead, narrow down using practical,
-   non-performance reasons:
-   - Skip or deprioritize anything showing the **"E" earnings badge** first.
+2. **Check the BUY list at each of the day's three alerts (9:35 / 11:40 /
+   1:45)** — unlike what an earlier version of this guide claimed, the same
+   ticker genuinely can flip between HOLD and BUY across checks the same
+   day, since it depends on where the live price is *right now* relative to
+   a fixed line (see "Timing" above). A ticker flagged `[seen 09:35 @
+   100.00, +2.0% since]` has already moved since it first qualified — treat
+   that as a worse, more "chased" entry than a ticker showing up fresh for
+   the first time, not as extra confirmation.
+3. **Keep your daily total (not per-check) around 5.** With three alerts a
+   day, that's three *chances* to fill the same daily quota with a
+   better-timed entry — not 5 per check, 15 for the day. Taking more just
+   because more checks now exist ties up capital for weeks per trade
+   (median holding periods run 2-4 weeks) without any evidence more volume
+   improves results.
+4. **If a single check has more than your remaining daily slots, don't hunt
+   for a "best" one** — there isn't a proven way to find it (see above).
+   Instead, narrow down using practical, non-performance reasons:
+   - Prefer a fresh (not-yet-`[seen ...]`) signal over one that's already run.
+   - Skip or deprioritize anything showing the **"E" earnings badge**.
    - Check the **capital required** for each (entry price × quantity) and
      make sure your total across all picks actually fits comfortably.
-   - If still choosing among more than 5, spread across different sectors
+   - If still choosing among several, spread across different sectors
      rather than stacking similar companies — a risk-reduction habit, not a
      performance edge.
-4. **Take fewer than 5 if fewer than 5 show up.** Don't force a trade just
+5. **Take fewer than 5 if fewer than 5 show up.** Don't force a trade just
    to fill a number.
-5. **Once entered, let the stop and target do their job.** This isn't a
-   day-trading system — trades often take a week or two to resolve. Don't
-   expect same-day results.
-6. **Treat "Watching" badges as tomorrow's heads-up, not today's action.**
+6. **Once entered, let the stop and target do their job.** This isn't a
+   day-trading system — trades often take a week or two (sometimes a month+)
+   to resolve. Don't expect same-day results, and don't add a second entry
+   in the same ticker just because it reappears in a later check the same
+   day — each trade plan assumes one entry, one stop, one target.
+7. **Treat "Watching" badges as tomorrow's heads-up, not today's action.**
    Acting on one early defeats the entire point of waiting for the close.
-7. **Track what actually happens over time** — win, loss, or still open —
+8. **Track what actually happens over time** — win, loss, or still open —
    against the backtested win rate, so real results can be honestly compared
    to what the data predicted, rather than just trusted blindly.
 
