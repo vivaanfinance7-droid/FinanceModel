@@ -19,6 +19,7 @@ import pandas as pd
 import config
 import data_provider
 import indicators
+import market_hours
 import store
 import trade_plan
 import trendline_engine
@@ -422,6 +423,25 @@ def analyze_ticker(ticker, daily_df, intraday_df, live_price, include_30min=Fals
     daily_df = daily_df.dropna(subset=["Close"]) if "Close" in daily_df.columns else daily_df
     if len(daily_df) < 10:
         return None
+
+    # Alpaca's "today" daily bar keeps updating throughout the session --
+    # calling this WHILE the market is open with a daily_df that still
+    # includes that row means `confirmed_price` below (float(daily_df["Close"]
+    # .iloc[-1])) is actually reading an unconfirmed, still-moving price, not
+    # yesterday's real close. That silently defeats the whole point of
+    # anchoring classification to a closed candle -- every backtest/
+    # simulation script in this project has always manually excluded today's
+    # row before calling this function; live scans never did. This is the
+    # actual explanation for a signal appearing to "change" between two
+    # same-day checks (see EBAY, 2026-09-01): it wasn't a live crossing, it
+    # was an unconfirmed row being read as if it were confirmed.
+    if market_hours.is_market_hours():
+        today_ny = datetime.now(market_hours.NY_TZ).date()
+        idx = daily_df.index
+        idx_ny = idx.tz_convert(market_hours.NY_TZ) if idx.tz is not None else idx
+        daily_df = daily_df[idx_ny.date < today_ny]
+        if daily_df.empty or len(daily_df) < 10:
+            return None
 
     weekly_df = trendline_engine.resample_ohlcv(daily_df, "W-FRI")
     monthly_df = trendline_engine.resample_ohlcv(daily_df, "ME")
