@@ -609,6 +609,10 @@ def analyze_ticker(ticker, daily_df, intraday_df, live_price, include_30min=Fals
             # redundant (and potentially confusing) to show a "forming" watch
             # on a ticker that already has a real, confirmed trade plan.
             "forming_signal": forming_signal if recommendation == "HOLD" else None,
+            # Needed by find_crossing_times() below to replay the exact same
+            # comparison intraday, bar by bar, against today's real prices.
+            "confirmed_price": round(confirmed_price, 4),
+            "atr_value": round(atr_value, 4) if atr_value is not None else None,
         },
         "poc_check": {
             "approaching": poc_approaching,
@@ -735,3 +739,69 @@ def analyze_single_ticker_full(ticker):
         result["trend_line_check"]["sector_crowding_blocked"] = False
 
     return result
+
+
+def _scan_for_cross(bars_today, tlc):
+    """
+    Replays trendline_engine._classify_signal's exact comparison bar-by-bar
+    through today's REAL intraday closes, to find the actual moment price
+    first crossed/touched the line -- rather than just knowing which check
+    happened to be the first to see it. Returns the crossing bar's tz-aware
+    Timestamp, or None if no bar in `bars_today` satisfies it (e.g. the
+    signal formed before today's available intraday history starts, or
+    data is missing).
+    """
+    action_line = tlc.get("action_line")
+    prev_close = tlc.get("confirmed_price")
+    signal = tlc.get("signal")
+    if not action_line or prev_close is None or signal not in ("BREAKOUT_BUY", "BOUNCE_BUY"):
+        return None
+
+    line_val = action_line["value_now"]
+    tol = config.TRENDLINE_BOUNCE_ATR_MULT * (tlc.get("atr_value") or 0)
+
+    for ts, row in bars_today.iterrows():
+        price = float(row["Close"])
+        if signal == "BREAKOUT_BUY" and prev_close < line_val <= price:
+            return ts
+        if signal == "BOUNCE_BUY" and price >= line_val and (price - line_val) <= tol and price > prev_close:
+            return ts
+    return None
+
+
+def find_crossing_times(results):
+    """
+    For BUY signals with a live trend-line breakout/bounce, finds the real
+    intraday moment price first crossed the line today (e.g. "10:30 AM")
+    and stores it as trend_line_check["crossed_at"] (a string, or None if
+    it can't be determined). This is strictly more precise than "which
+    check first showed you this ticker" -- a check landing well after the
+    actual cross was exactly what made EBAY's 2026-09-01 entry look chased
+    on a chart afterward. Mutates `results` in place; also returns it.
+    """
+    candidates = [r for r in results
+                  if r.get("recommendation") == "BUY"
+                  and r.get("trend_line_check", {}).get("breakout_or_bounce") in ("breakout", "bounce")]
+    for r in candidates:
+        r["trend_line_check"]["crossed_at"] = None
+    if not candidates:
+        return results
+
+    tickers = [r["ticker"] for r in candidates]
+    intraday_hist, _ = data_provider.get_intraday_history_batch(tickers, minutes=5, days=1)
+    today_ny = datetime.now(market_hours.NY_TZ).date()
+
+    for r in candidates:
+        bars = intraday_hist.get(r["ticker"])
+        if bars is None or bars.empty:
+            continue
+        idx_ny = bars.index.tz_convert(market_hours.NY_TZ) if bars.index.tz is not None else bars.index
+        bars_today = bars[idx_ny.date == today_ny]
+        if bars_today.empty:
+            continue
+        crossed_ts = _scan_for_cross(bars_today, r["trend_line_check"])
+        if crossed_ts is not None:
+            crossed_ts_ny = crossed_ts.tz_convert(market_hours.NY_TZ) if crossed_ts.tzinfo is not None else crossed_ts
+            r["trend_line_check"]["crossed_at"] = crossed_ts_ny.strftime("%I:%M %p").lstrip("0")
+
+    return results

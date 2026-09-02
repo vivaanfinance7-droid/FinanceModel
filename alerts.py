@@ -52,10 +52,19 @@ def build_top5_message(results, slot_label=None, seen_today=None):
     for r in top5:
         tp = r["trade_plan"]
         line = f"{r['ticker']}: entry {tp['entry']:.2f} / stop {tp['stop']:.2f} / target {tp['target']:.2f}"
-        prior = seen_today.get(r["ticker"])
-        if prior:
-            pct_moved = (tp["entry"] - prior["first_price"]) / prior["first_price"] * 100
-            line += f" [seen {prior['first_slot']} @ {prior['first_price']:.2f}, {pct_moved:+.1f}% since]"
+
+        # Prefer the real intraday crossing time (precise, e.g. "10:30 AM")
+        # over the coarser "which check first saw it" flag -- only fall
+        # back to the latter when the crossing time couldn't be determined
+        # (e.g. intraday data fetch failed).
+        crossed_at = r["trend_line_check"].get("crossed_at")
+        if crossed_at:
+            line += f" (crossed {crossed_at})"
+        else:
+            prior = seen_today.get(r["ticker"])
+            if prior:
+                pct_moved = (tp["entry"] - prior["first_price"]) / prior["first_price"] * 100
+                line += f" [seen {prior['first_slot']} @ {prior['first_price']:.2f}, {pct_moved:+.1f}% since]"
         lines.append(line)
     lines.append(config.DASHBOARD_URL)
     return "\n".join(lines)

@@ -73,6 +73,13 @@ def run_scan():
         qualifying = [r for r in results if r.get("passes")]
         log.info(f"Full scan analyzed {len(results)} tickers; {len(qualifying)} passed a method.")
 
+        # Only for tickers actually clearing as BUY (a small set) -- finds
+        # the real intraday moment each one crossed its line today, so the
+        # alert can say "crossed 10:30 AM" instead of just "seen at this
+        # check," which can land well after the actual cross (see EBAY,
+        # 2026-09-01).
+        strategy_engine.find_crossing_times(results)
+
         # Snapshot BEFORE recording this run's tickers, so the alert can
         # correctly tell "already seen earlier today" apart from "brand new
         # this check" -- see alerts.build_top5_message.
