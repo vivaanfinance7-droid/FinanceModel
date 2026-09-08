@@ -104,7 +104,7 @@ def run_scan(force=False):
 
         # Snapshot BEFORE recording this run's tickers, so the alert can
         # correctly tell "already seen earlier today" apart from "brand new
-        # this check" -- see alerts.build_top5_message.
+        # this check" -- see alerts.build_market_check_message.
         seen_today_before = state_manager.get_seen_today()
         for r in results:
             if r.get("recommendation") == "BUY" and r.get("trade_plan"):
@@ -141,7 +141,7 @@ def run_scan(force=False):
     # whatever's true RIGHT NOW, including "0 signals" -- a twice-daily
     # market-analysis check-in, not a one-time ping the first time a setup
     # appears. Price-only refreshes never reach this point.
-    message = alerts.build_top5_message(results, slot_label=slot, seen_today=seen_today_before)
+    message = alerts.build_market_check_message(results, slot_label=slot, seen_today=seen_today_before)
     log.info(f"Sending alert: {message}")
     alerts.send(message)
 

@@ -17,7 +17,33 @@ log = logging.getLogger("sp500_scanner")
 # MESSAGE BUILDERS
 # ---------------------------------------------------------------------------
 
-def build_top5_message(results, slot_label=None, seen_today=None):
+def _format_buy_line(r, seen_today):
+    tp = r["trade_plan"]
+    line = (f"{r['ticker']}: qty {tp['qty']} @ entry {tp['entry']:.2f} "
+            f"/ stop {tp['stop']:.2f} / target {tp['target']:.2f}")
+
+    # Prefer the real intraday crossing time+price (precise, e.g.
+    # "10:30 AM @ 103.20, +1.8% since") over the coarser "which check first
+    # saw it" flag -- only fall back to the latter when the crossing time
+    # couldn't be determined (e.g. intraday data fetch failed). This is
+    # also correct for an OLD (already-seen) ticker: crossed_at/crossed_price
+    # are recomputed fresh from today's full intraday history every scan,
+    # so they still point at the true original cross, not just "since your
+    # last check."
+    crossed_at = r["trend_line_check"].get("crossed_at")
+    crossed_price = r["trend_line_check"].get("crossed_price")
+    if crossed_at and crossed_price:
+        pct_moved = (tp["entry"] - crossed_price) / crossed_price * 100
+        line += f" (crossed {crossed_at} @ {crossed_price:.2f}, {pct_moved:+.1f}% since)"
+    else:
+        prior = seen_today.get(r["ticker"])
+        if prior:
+            pct_moved = (tp["entry"] - prior["first_price"]) / prior["first_price"] * 100
+            line += f" [seen {prior['first_slot']} @ {prior['first_price']:.2f}, {pct_moved:+.1f}% since]"
+    return line
+
+
+def build_market_check_message(results, slot_label=None, seen_today=None):
     """
     Sent unconditionally on each of the day's scheduled "market analysis"
     scans (see scanner.py / config.STRATEGY_SCAN_TIMES_ET) -- does NOT
@@ -26,52 +52,42 @@ def build_top5_message(results, slot_label=None, seen_today=None):
     appears.
 
     results: list of strategy_engine.analyze_ticker()-shaped dicts (the
-    full scan's results, not pre-filtered). Picks up to 5 BUY signals with
-    a trade plan, alphabetically by ticker -- same "no validated ranking,
-    so alphabetical" rule used everywhere else in this project.
+    full scan's results, not pre-filtered).
 
     seen_today: {ticker: {"first_price":..., "first_slot":...}} from
     state_manager.get_seen_today(), captured BEFORE this scan's results were
-    recorded -- lets each line flag "you've already seen this one today"
-    plus how far it's moved since, rather than reading as a brand-new setup
-    every time it's still active at a later checkpoint (see the EBAY
-    entry-timing discussion from 2026-09-01).
+    recorded. Splits BUY signals into a NEW section (not in seen_today --
+    up to 5, alphabetical) and, below a separator, an OLD section (already
+    flagged at an earlier check today -- also up to 5). At the very first
+    check of the day seen_today is always empty, so this naturally
+    collapses to just the NEW section with no separator -- no need to
+    special-case the 09:35 slot. "No validated ranking, so alphabetical"
+    is still the rule within each section.
     """
     seen_today = seen_today or {}
     buys = [r for r in results if r.get("recommendation") == "BUY" and r.get("trade_plan")]
     buys.sort(key=lambda r: r["ticker"])
-    top5 = buys[:5]
+
+    new_buys = [r for r in buys if r["ticker"] not in seen_today][:5]
+    old_buys = [r for r in buys if r["ticker"] in seen_today][:5]
 
     header = f"{slot_label} scan" if slot_label else "Scan"
     regime = results[0]["trend_line_check"].get("market_bias", "unknown") if results else "unknown"
 
-    if not top5:
+    if not new_buys and not old_buys:
         return f"{header} (regime: {regime}): 0 BUY signals right now.\n{config.DASHBOARD_URL}"
 
-    lines = [f"{header} (regime: {regime}): {len(top5)} BUY signal(s):"]
-    for r in top5:
-        tp = r["trade_plan"]
-        line = (f"{r['ticker']}: qty {tp['qty']} @ entry {tp['entry']:.2f} "
-                f"/ stop {tp['stop']:.2f} / target {tp['target']:.2f}")
+    lines = [f"{header} (regime: {regime}): {len(new_buys) + len(old_buys)} BUY signal(s):"]
+    if new_buys:
+        lines.extend(_format_buy_line(r, seen_today) for r in new_buys)
+    else:
+        lines.append("(no new signals since your last check)")
 
-        # Prefer the real intraday crossing time+price (precise, e.g.
-        # "10:30 AM @ 103.20, +1.8% since") over the coarser "which check
-        # first saw it" flag -- only fall back to the latter when the
-        # crossing time couldn't be determined (e.g. intraday data fetch
-        # failed). Both branches show a %-since figure now -- the earlier
-        # version only showed it in the fallback branch, which is why some
-        # tickers had it and others didn't.
-        crossed_at = r["trend_line_check"].get("crossed_at")
-        crossed_price = r["trend_line_check"].get("crossed_price")
-        if crossed_at and crossed_price:
-            pct_moved = (tp["entry"] - crossed_price) / crossed_price * 100
-            line += f" (crossed {crossed_at} @ {crossed_price:.2f}, {pct_moved:+.1f}% since)"
-        else:
-            prior = seen_today.get(r["ticker"])
-            if prior:
-                pct_moved = (tp["entry"] - prior["first_price"]) / prior["first_price"] * 100
-                line += f" [seen {prior['first_slot']} @ {prior['first_price']:.2f}, {pct_moved:+.1f}% since]"
-        lines.append(line)
+    if old_buys:
+        lines.append("______________")
+        lines.append("OLD companies:")
+        lines.extend(_format_buy_line(r, seen_today) for r in old_buys)
+
     lines.append(config.DASHBOARD_URL)
     return "\n".join(lines)
 
